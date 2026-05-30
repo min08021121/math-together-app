@@ -474,13 +474,7 @@ function AppHeader({
   );
 }
 
-function LoginScreen({
-  hasTeacherAccount,
-  onLogin,
-}: {
-  hasTeacherAccount: boolean;
-  onLogin: (role: "student" | "teacher", name: string, password: string) => Promise<string | null>;
-}) {
+function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name: string, password: string) => Promise<string | null> }) {
   const [selectedRole, setSelectedRole] = useState<"student" | "teacher" | null>(null);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -519,11 +513,6 @@ function LoginScreen({
             <h1 className="text-2xl font-black tracking-tight text-slate-900">오늘도 같이 공부해요</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">역할을 선택한 뒤 받은 이름과 비밀번호로 들어가 주세요.</p>
           </div>
-          {selectedRole === "teacher" && !hasTeacherAccount && (
-            <div className="mb-5 rounded-2xl bg-violet-50/80 p-4 text-sm font-bold leading-6 text-violet-700">
-              아직 교사 계정이 없어요. 지금 입력하는 이름과 비밀번호가 첫 교사 계정으로 설정됩니다.
-            </div>
-          )}
           <div className="mb-5 grid grid-cols-2 gap-3">
             <button
               className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${selectedRole === "student" ? "border-blue-300 bg-blue-50 text-blue-700 ring-4 ring-blue-100/70" : "border-white/60 bg-white/60 text-slate-500 hover:bg-white"}`}
@@ -1657,7 +1646,7 @@ export default function HomePage() {
         {syncMessage}
       </div>
       <div className="relative">
-        {screen === "login" && <LoginScreen hasTeacherAccount={Boolean(teacherAccount)} onLogin={login} />}
+        {screen === "login" && <LoginScreen onLogin={login} />}
         {screen === "student-home" && <StudentHome onChooseMode={(mode) => { setStudyMode(mode); setScreen("study-picker"); }} onLogout={logout} student={currentStudent} />}
         {screen === "study-picker" && <StudyPicker loading={lessonLoading} mode={studyMode} onBack={() => setScreen("student-home")} onLogout={logout} onStart={startLesson} student={currentStudent} />}
         {screen === "lesson" && lesson && (
