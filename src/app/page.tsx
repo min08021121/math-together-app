@@ -8,7 +8,7 @@ import { auth, db } from "@/lib/firebase";
 
 type Screen = "login" | "student-home" | "study-picker" | "lesson" | "teacher";
 type StudyMode = "self" | "homework";
-type TeacherTab = "progress" | "assignment";
+type TeacherTab = "progress" | "assignment" | "students";
 type AIRequest =
   | { type: "lesson"; concept: string }
   | { type: "hint"; concept: string; problem: LessonProblem; attempt: 1 | 2 };
@@ -53,6 +53,7 @@ interface Student {
   id: string;
   name: string;
   grade: string;
+  password: string;
   assignments: Assignment[];
   records: LearningRecord[];
 }
@@ -87,6 +88,7 @@ const initialStudents: Student[] = [
     id: "student-1",
     name: "민준",
     grade: "4학년",
+    password: "1234",
     assignments: [
       { id: "assignment-1", concept: "분수의 덧셈", assignedAt: "5월 29일", completed: false },
       { id: "assignment-2", concept: "두 자리 수 곱셈", assignedAt: "5월 27일", completed: true },
@@ -118,6 +120,7 @@ const initialStudents: Student[] = [
     id: "student-2",
     name: "서연",
     grade: "3학년",
+    password: "1234",
     assignments: [
       { id: "assignment-3", concept: "세 자리 수 뺄셈", assignedAt: "5월 28일", completed: false },
     ],
@@ -138,6 +141,7 @@ const initialStudents: Student[] = [
     id: "student-3",
     name: "지우",
     grade: "5학년",
+    password: "1234",
     assignments: [
       { id: "assignment-4", concept: "소수의 크기 비교", assignedAt: "5월 29일", completed: false },
       { id: "assignment-5", concept: "분수의 덧셈", assignedAt: "5월 26일", completed: false },
@@ -148,6 +152,7 @@ const initialStudents: Student[] = [
     id: "student-4",
     name: "하준",
     grade: "4학년",
+    password: "1234",
     assignments: [],
     records: [],
   },
@@ -155,6 +160,15 @@ const initialStudents: Student[] = [
 
 const DEMO_STORAGE_KEY = "math-together-demo-students";
 const DEMO_FIRESTORE_DOC = "mathTogetherPrototype";
+const TEACHER_PASSWORD = "teacher1234";
+
+const normalizeStudents = (students: Student[]) =>
+  students.map((student) => ({
+    ...student,
+    password: student.password || "1234",
+    assignments: Array.isArray(student.assignments) ? student.assignments : [],
+    records: Array.isArray(student.records) ? student.records : [],
+  }));
 
 const lessonBank: Record<string, LessonAIResponse> = {
   "분수의 덧셈": {
@@ -386,7 +400,7 @@ function AppHeader({
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name: string) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name: string, password: string) => string | null }) {
   const [name, setName] = useState("민준");
   const [password, setPassword] = useState("1234");
   const [error, setError] = useState("");
@@ -396,8 +410,8 @@ function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name:
       setError("이름과 비밀번호를 모두 입력해 주세요.");
       return;
     }
-    setError("");
-    onLogin(role, name.trim());
+    const loginError = onLogin(role, name.trim(), password.trim());
+    setError(loginError ?? "");
   };
 
   return (
@@ -435,7 +449,7 @@ function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name:
               <Icon name="teacher" className="h-4 w-4" /> 선생님으로 로그인
             </AppButton>
           </div>
-          <p className="mt-6 text-center text-[11px] font-medium text-slate-400">테스트 학생 이름: 민준, 서연, 지우, 하준</p>
+          <p className="mt-6 text-center text-[11px] font-medium text-slate-400">학생 비밀번호: 1234 · 선생님 비밀번호: teacher1234</p>
         </GlassCard>
       </div>
     </main>
@@ -703,16 +717,22 @@ function LessonScreen({
 function TeacherDashboard({
   students,
   onLogout,
+  onAddStudent,
   onSendAssignment,
 }: {
   students: Student[];
   onLogout: () => void;
+  onAddStudent: (name: string, grade: string, password: string) => string | null;
   onSendAssignment: (studentId: string, concept: string) => void;
 }) {
   const [selectedId, setSelectedId] = useState(students[0].id);
   const [activeTab, setActiveTab] = useState<TeacherTab>("progress");
   const [concept, setConcept] = useState("");
   const [sentMessage, setSentMessage] = useState("");
+  const [newStudentName, setNewStudentName] = useState("");
+  const [newStudentGrade, setNewStudentGrade] = useState("4학년");
+  const [newStudentPassword, setNewStudentPassword] = useState("1234");
+  const [studentMessage, setStudentMessage] = useState("");
   const selected = students.find((student) => student.id === selectedId) ?? students[0];
   const failedRecords = selected.records.filter((record) => record.isFailed);
 
@@ -721,6 +741,20 @@ function TeacherDashboard({
     onSendAssignment(selected.id, concept.trim());
     setSentMessage(`${selected.name} 학생에게 숙제를 보냈어요.`);
     setConcept("");
+  };
+
+  const addStudent = () => {
+    const result = onAddStudent(newStudentName.trim(), newStudentGrade.trim(), newStudentPassword.trim());
+
+    if (result) {
+      setStudentMessage(result);
+      return;
+    }
+
+    setStudentMessage(`${newStudentName.trim()} 학생을 추가했어요.`);
+    setNewStudentName("");
+    setNewStudentGrade("4학년");
+    setNewStudentPassword("1234");
   };
 
   return (
@@ -767,6 +801,7 @@ function TeacherDashboard({
             <div className="flex w-fit gap-1 rounded-2xl bg-white/45 p-1 backdrop-blur-xl">
               <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "progress" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("progress")}>학생별 학습 현황</button>
               <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "assignment" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("assignment")}>숙제 내주기</button>
+              <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "students" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("students")}>학생 추가</button>
             </div>
           </div>
           {activeTab === "progress" ? (
@@ -836,7 +871,7 @@ function TeacherDashboard({
                 </GlassCard>
               )}
             </div>
-          ) : (
+          ) : activeTab === "assignment" ? (
             <GlassCard className="p-6 sm:p-8">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
                 <Icon name="send" className="h-5 w-5" />
@@ -875,6 +910,50 @@ function TeacherDashboard({
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${assignment.completed ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"}`}>{assignment.completed ? "완료" : "진행 전"}</span>
                     </div>
                   )) : <p className="rounded-2xl bg-white/35 p-4 text-xs font-medium text-slate-400">아직 보낸 숙제가 없어요.</p>}
+                </div>
+              </div>
+            </GlassCard>
+          ) : (
+            <GlassCard className="p-6 sm:p-8">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
+                <Icon name="plus" className="h-5 w-5" />
+              </div>
+              <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-900">새 학생 추가</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">학생 이름, 학년, 임시 비밀번호를 등록하면 바로 로그인할 수 있어요.</p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <input
+                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                  onChange={(event) => setNewStudentName(event.target.value)}
+                  placeholder="학생 이름"
+                  value={newStudentName}
+                />
+                <input
+                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                  onChange={(event) => setNewStudentGrade(event.target.value)}
+                  placeholder="학년"
+                  value={newStudentGrade}
+                />
+                <input
+                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                  onChange={(event) => setNewStudentPassword(event.target.value)}
+                  placeholder="임시 비밀번호"
+                  type="password"
+                  value={newStudentPassword}
+                />
+              </div>
+              <AppButton className="mt-4" disabled={!newStudentName.trim() || !newStudentGrade.trim() || !newStudentPassword.trim()} onClick={addStudent}>
+                <Icon name="plus" className="h-4 w-4" /> 학생 추가
+              </AppButton>
+              {studentMessage && <p className="mt-5 rounded-2xl bg-emerald-50/80 p-4 text-sm font-bold text-emerald-700">{studentMessage}</p>}
+              <div className="mt-8 border-t border-white/50 pt-6">
+                <h3 className="text-sm font-black text-slate-800">등록된 학생</h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {students.map((student) => (
+                    <div className="rounded-2xl bg-white/45 px-4 py-3" key={`student-card-${student.id}`}>
+                      <p className="text-sm font-bold text-slate-700">{student.name}</p>
+                      <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 비밀번호 {student.password}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
             </GlassCard>
@@ -922,19 +1001,19 @@ const normalizeAnswer = (answer: string) => answer.replace(/\s|,/g, "").toLowerC
 export default function HomePage() {
   const [screen, setScreen] = useState<Screen>("login");
   const [students, setStudents] = useState<Student[]>(() => {
-    if (typeof window === "undefined") return initialStudents;
+    if (typeof window === "undefined") return normalizeStudents(initialStudents);
 
     try {
       const savedStudents = window.localStorage.getItem(DEMO_STORAGE_KEY);
-      if (!savedStudents) return initialStudents;
+      if (!savedStudents) return normalizeStudents(initialStudents);
 
       const parsedStudents = JSON.parse(savedStudents) as Student[];
       return Array.isArray(parsedStudents) && parsedStudents.length > 0
-        ? parsedStudents
-        : initialStudents;
+        ? normalizeStudents(parsedStudents)
+        : normalizeStudents(initialStudents);
     } catch {
       window.localStorage.removeItem(DEMO_STORAGE_KEY);
-      return initialStudents;
+      return normalizeStudents(initialStudents);
     }
   });
   const [currentStudentId, setCurrentStudentId] = useState(initialStudents[0].id);
@@ -974,7 +1053,7 @@ export default function HomePage() {
             const remoteStudents = snapshot.data().students;
             if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
               applyingRemoteStudents.current = true;
-              setStudents(remoteStudents as Student[]);
+              setStudents(normalizeStudents(remoteStudents as Student[]));
             }
             setFirestoreReady(true);
             setSyncMessage("Firestore 연결됨");
@@ -1035,14 +1114,27 @@ export default function HomePage() {
     setLesson(null);
   };
 
-  const login = (role: "student" | "teacher", name: string) => {
+  const login = (role: "student" | "teacher", name: string, password: string) => {
     if (role === "teacher") {
+      if (password !== TEACHER_PASSWORD) {
+        return "선생님 비밀번호가 맞지 않아요.";
+      }
       setScreen("teacher");
-      return;
+      return null;
     }
-    const matchingStudent = students.find((student) => student.name === name) ?? students[0];
+    const matchingStudent = students.find((student) => student.name === name);
+
+    if (!matchingStudent) {
+      return "등록된 학생 이름이 아니에요.";
+    }
+
+    if (matchingStudent.password !== password) {
+      return "학생 비밀번호가 맞지 않아요.";
+    }
+
     setCurrentStudentId(matchingStudent.id);
     setScreen("student-home");
+    return null;
   };
 
   const startLesson = async (concept: string, assignmentId?: string) => {
@@ -1174,6 +1266,29 @@ export default function HomePage() {
     );
   };
 
+  const addStudent = (name: string, grade: string, password: string) => {
+    if (!name || !grade || !password) {
+      return "이름, 학년, 비밀번호를 모두 입력해 주세요.";
+    }
+
+    if (students.some((student) => student.name === name)) {
+      return "이미 등록된 학생 이름이에요.";
+    }
+
+    const newStudent: Student = {
+      id: `student-${Date.now()}`,
+      name,
+      grade,
+      password,
+      assignments: [],
+      records: [],
+    };
+
+    setStudents((previous) => [...previous, newStudent]);
+    setCurrentStudentId(newStudent.id);
+    return null;
+  };
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f9fafb] font-sans text-slate-800 antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(191,219,254,0.78),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(221,214,254,0.75),transparent_34%),radial-gradient(circle_at_55%_90%,rgba(224,231,255,0.78),transparent_38%)]" />
@@ -1194,7 +1309,7 @@ export default function HomePage() {
             onSubmit={submitAnswer}
           />
         )}
-        {screen === "teacher" && <TeacherDashboard onLogout={logout} onSendAssignment={sendAssignment} students={students} />}
+        {screen === "teacher" && <TeacherDashboard onAddStudent={addStudent} onLogout={logout} onSendAssignment={sendAssignment} students={students} />}
       </div>
     </div>
   );
