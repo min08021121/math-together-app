@@ -1,0 +1,157 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isTeacher() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "teacher";
+    }
+
+    function isTeacherAfterWrite() {
+      return signedIn()
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "teacher";
+    }
+
+    function isTeacherOf(studentId) {
+      return isTeacher()
+        && get(/databases/$(database)/documents/users/$(studentId)).data.teacherId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role in ["teacher", "student"]
+        && (
+          request.resource.data.role == "teacher"
+          || (
+            request.resource.data.teacherId is string
+            && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.role == "teacher"
+          )
+        );
+
+      allow get: if signedIn()
+        && (request.auth.uid == userId
+          || (isTeacher() && resource.data.teacherId == request.auth.uid));
+
+      allow list: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["displayName"]);
+    }
+
+    match /teacherInvites/{inviteCode} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if isTeacherAfterWrite()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /groups/{groupId} {
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow read, update, delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /homeworks/{homeworkId} {
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow read, update, delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /assignments/{assignmentId} {
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && isTeacherOf(request.resource.data.studentId);
+
+      allow read: if signedIn()
+        && (resource.data.teacherId == request.auth.uid
+          || resource.data.studentId == request.auth.uid);
+
+      allow update: if signedIn()
+        && (
+          (isTeacher() && resource.data.teacherId == request.auth.uid)
+          || (
+            resource.data.studentId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["status", "completedAt"])
+          )
+        );
+
+      allow delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /conceptAssignments/{assignmentId} {
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && isTeacherOf(request.resource.data.studentId);
+
+      allow read: if signedIn()
+        && (resource.data.teacherId == request.auth.uid
+          || resource.data.studentId == request.auth.uid);
+
+      allow update: if signedIn()
+        && (
+          (isTeacher() && resource.data.teacherId == request.auth.uid)
+          || (
+            resource.data.studentId == request.auth.uid
+            && request.resource.data.studentId == resource.data.studentId
+            && request.resource.data.teacherId == resource.data.teacherId
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["status", "completedAt"])
+          )
+        );
+
+      allow delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /learningRecords/{recordId} {
+      allow create: if signedIn()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.teacherId
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teacherId
+        && request.resource.data.attempts == 0
+        && request.resource.data.wrongAnswers.size() == 0
+        && request.resource.data.isFailed == false
+        && request.resource.data.isCorrect == false;
+
+      allow read: if signedIn()
+        && (resource.data.teacherId == request.auth.uid
+          || resource.data.studentId == request.auth.uid);
+
+      allow update: if signedIn()
+        && resource.data.studentId == request.auth.uid
+        && request.resource.data.studentId == resource.data.studentId
+        && request.resource.data.teacherId == resource.data.teacherId
+        && request.resource.data.attempts == resource.data.attempts + 1
+        && request.resource.data.wrongAnswers.size() >= resource.data.wrongAnswers.size()
+        && request.resource.data.wrongAnswers.size() <= resource.data.wrongAnswers.size() + 1
+        && (
+          request.resource.data.isFailed == false
+          || request.resource.data.attempts >= 3
+        )
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            "attempts",
+            "wrongAnswers",
+            "isFailed",
+            "isCorrect",
+            "updatedAt"
+          ]);
+
+      allow delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+  }
+}

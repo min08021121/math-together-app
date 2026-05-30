@@ -1,0 +1,9 @@
+runConfig:
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 80
+
+# Gemini 연결 시에는 키를 저장소에 올리지 말고 Secret Manager를 사용하세요.
+# env:
+#   - variable: GEMINI_API_KEY
+#     secret: geminiApiKey
