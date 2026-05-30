@@ -231,7 +231,7 @@ const makeLoginEmail = (role: "student" | "teacher", loginName: string) => {
   return `${role}-${encodedName || "user"}@math-together.local`;
 };
 
-const makeStudentAuthPassword = (password: string) => `student-${password}`;
+const makeAuthPassword = (role: "student" | "teacher", password: string) => `${role}-${password}`;
 
 const formatStoredDate = (value: unknown) => {
   if (value && typeof value === "object" && "toDate" in value) {
@@ -1407,7 +1407,7 @@ export default function HomePage() {
       const credential = await signInWithEmailAndPassword(
         auth,
         email,
-        role === "student" ? makeStudentAuthPassword(password) : password,
+        makeAuthPassword(role, password),
       );
       const profile = await readProfile(credential.user.uid);
 
@@ -1428,7 +1428,7 @@ export default function HomePage() {
       }
 
       try {
-        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        const credential = await createUserWithEmailAndPassword(auth, email, makeAuthPassword("teacher", password));
         const profile: UserProfile = {
           id: credential.user.uid,
           role: "teacher",
@@ -1592,7 +1592,7 @@ export default function HomePage() {
       const credential = await createUserWithEmailAndPassword(
         secondaryAuth,
         makeLoginEmail("student", name),
-        makeStudentAuthPassword(password),
+        makeAuthPassword("student", password),
       );
       await setDoc(doc(secondaryDb, "users", credential.user.uid), {
         role: "student",
@@ -1632,9 +1632,12 @@ export default function HomePage() {
     }
 
     try {
-      const credential = EmailAuthProvider.credential(makeLoginEmail("teacher", teacherAccount.loginName), currentPassword);
+      const credential = EmailAuthProvider.credential(
+        makeLoginEmail("teacher", teacherAccount.loginName),
+        makeAuthPassword("teacher", currentPassword),
+      );
       await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, password);
+      await updatePassword(auth.currentUser, makeAuthPassword("teacher", password));
       await updateDoc(doc(db, "users", teacherAccount.id), {
         displayName: name,
         updatedAt: serverTimestamp(),
