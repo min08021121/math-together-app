@@ -231,6 +231,8 @@ const makeLoginEmail = (role: "student" | "teacher", loginName: string) => {
   return `${role}-${encodedName || "user"}@math-together.local`;
 };
 
+const makeStudentAuthPassword = (password: string) => `student-${password}`;
+
 const formatStoredDate = (value: unknown) => {
   if (value && typeof value === "object" && "toDate" in value) {
     const timestamp = value as { toDate?: () => Date };
@@ -1402,7 +1404,11 @@ export default function HomePage() {
     const email = makeLoginEmail(role, name);
 
     try {
-      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        role === "student" ? makeStudentAuthPassword(password) : password,
+      );
       const profile = await readProfile(credential.user.uid);
 
       if (!profile || profile.role !== role) {
@@ -1583,7 +1589,11 @@ export default function HomePage() {
     const secondaryDb = getFirestore(secondaryApp);
 
     try {
-      const credential = await createUserWithEmailAndPassword(secondaryAuth, makeLoginEmail("student", name), password);
+      const credential = await createUserWithEmailAndPassword(
+        secondaryAuth,
+        makeLoginEmail("student", name),
+        makeStudentAuthPassword(password),
+      );
       await setDoc(doc(secondaryDb, "users", credential.user.uid), {
         role: "student",
         displayName: name,
@@ -1598,9 +1608,15 @@ export default function HomePage() {
       return null;
     } catch (error) {
       const code = (error as { code?: string }).code;
-      return code === "auth/email-already-in-use"
-        ? "이미 사용 중인 학생 이름이에요."
-        : "학생 계정을 만들 수 없어요. Authentication 설정을 확인해 주세요.";
+      if (code === "auth/email-already-in-use") {
+        return "이미 사용 중인 학생 이름이에요.";
+      }
+
+      if (code === "auth/weak-password") {
+        return "학생 비밀번호를 다시 입력해 주세요.";
+      }
+
+      return "학생 계정을 만들 수 없어요. Authentication 설정을 확인해 주세요.";
     } finally {
       await deleteApp(secondaryApp);
     }
