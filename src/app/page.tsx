@@ -58,6 +58,11 @@ interface Student {
   records: LearningRecord[];
 }
 
+interface TeacherAccount {
+  name: string;
+  password: string;
+}
+
 interface LessonProblem {
   id: string;
   question: string;
@@ -159,8 +164,8 @@ const initialStudents: Student[] = [
 ];
 
 const DEMO_STORAGE_KEY = "math-together-demo-students";
+const DEMO_TEACHER_STORAGE_KEY = "math-together-demo-teacher";
 const DEMO_FIRESTORE_DOC = "mathTogetherPrototype";
-const TEACHER_PASSWORD = "teacher1234";
 
 const normalizeStudents = (students: Student[]) =>
   students.map((student) => ({
@@ -169,6 +174,13 @@ const normalizeStudents = (students: Student[]) =>
     assignments: Array.isArray(student.assignments) ? student.assignments : [],
     records: Array.isArray(student.records) ? student.records : [],
   }));
+
+const isTeacherAccount = (value: unknown): value is TeacherAccount => {
+  if (!value || typeof value !== "object") return false;
+
+  const candidate = value as TeacherAccount;
+  return typeof candidate.name === "string" && typeof candidate.password === "string";
+};
 
 const lessonBank: Record<string, LessonAIResponse> = {
   "분수의 덧셈": {
@@ -400,7 +412,13 @@ function AppHeader({
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name: string, password: string) => string | null }) {
+function LoginScreen({
+  hasTeacherAccount,
+  onLogin,
+}: {
+  hasTeacherAccount: boolean;
+  onLogin: (role: "student" | "teacher", name: string, password: string) => string | null;
+}) {
   const [selectedRole, setSelectedRole] = useState<"student" | "teacher" | null>(null);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -439,6 +457,11 @@ function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name:
             <h1 className="text-2xl font-black tracking-tight text-slate-900">오늘도 같이 공부해요</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">역할을 선택한 뒤 받은 이름과 비밀번호로 들어가 주세요.</p>
           </div>
+          {selectedRole === "teacher" && !hasTeacherAccount && (
+            <div className="mb-5 rounded-2xl bg-violet-50/80 p-4 text-sm font-bold leading-6 text-violet-700">
+              아직 교사 계정이 없어요. 지금 입력하는 이름과 비밀번호가 첫 교사 계정으로 설정됩니다.
+            </div>
+          )}
           <div className="mb-5 grid grid-cols-2 gap-3">
             <button
               className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${selectedRole === "student" ? "border-blue-300 bg-blue-50 text-blue-700 ring-4 ring-blue-100/70" : "border-white/60 bg-white/60 text-slate-500 hover:bg-white"}`}
@@ -743,14 +766,18 @@ function LessonScreen({
 
 function TeacherDashboard({
   students,
+  teacherAccount,
   onLogout,
   onAddStudent,
   onSendAssignment,
+  onUpdateTeacherAccount,
 }: {
   students: Student[];
+  teacherAccount: TeacherAccount;
   onLogout: () => void;
   onAddStudent: (name: string, grade: string, password: string) => string | null;
   onSendAssignment: (studentId: string, concept: string) => void;
+  onUpdateTeacherAccount: (currentPassword: string, name: string, password: string) => string | null;
 }) {
   const [selectedId, setSelectedId] = useState(students[0].id);
   const [activeTab, setActiveTab] = useState<TeacherTab>("progress");
@@ -760,6 +787,10 @@ function TeacherDashboard({
   const [newStudentGrade, setNewStudentGrade] = useState("");
   const [newStudentPassword, setNewStudentPassword] = useState("");
   const [studentMessage, setStudentMessage] = useState("");
+  const [teacherName, setTeacherName] = useState(teacherAccount.name);
+  const [teacherCurrentPassword, setTeacherCurrentPassword] = useState("");
+  const [teacherNewPassword, setTeacherNewPassword] = useState("");
+  const [teacherMessage, setTeacherMessage] = useState("");
   const selected = students.find((student) => student.id === selectedId) ?? students[0];
   const failedRecords = selected.records.filter((record) => record.isFailed);
 
@@ -784,13 +815,30 @@ function TeacherDashboard({
     setNewStudentPassword("");
   };
 
+  const updateTeacherAccount = () => {
+    const result = onUpdateTeacherAccount(
+      teacherCurrentPassword.trim(),
+      teacherName.trim(),
+      teacherNewPassword.trim(),
+    );
+
+    if (result) {
+      setTeacherMessage(result);
+      return;
+    }
+
+    setTeacherMessage("교사 계정 정보를 변경했어요.");
+    setTeacherCurrentPassword("");
+    setTeacherNewPassword("");
+  };
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-white/30 bg-white/25 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
           <Logo compact />
           <div className="flex items-center gap-3">
-            <span className="hidden text-xs font-bold text-slate-500 sm:inline">담임 선생님</span>
+            <span className="hidden text-xs font-bold text-slate-500 sm:inline">{teacherAccount.name} 선생님</span>
             <button aria-label="로그아웃" className="flex h-10 w-10 items-center justify-center rounded-2xl text-slate-500 transition hover:bg-white/60 hover:text-slate-800" onClick={onLogout}>
               <Icon name="logout" />
             </button>
@@ -941,49 +989,85 @@ function TeacherDashboard({
               </div>
             </GlassCard>
           ) : (
-            <GlassCard className="p-6 sm:p-8">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
-                <Icon name="plus" className="h-5 w-5" />
-              </div>
-              <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-900">새 학생 추가</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">학생 이름, 학년, 임시 비밀번호를 등록하면 바로 로그인할 수 있어요.</p>
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                <input
-                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
-                  onChange={(event) => setNewStudentName(event.target.value)}
-                  placeholder="학생 이름"
-                  value={newStudentName}
-                />
-                <input
-                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
-                  onChange={(event) => setNewStudentGrade(event.target.value)}
-                  placeholder="학년"
-                  value={newStudentGrade}
-                />
-                <input
-                  className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
-                  onChange={(event) => setNewStudentPassword(event.target.value)}
-                  placeholder="임시 비밀번호"
-                  type="password"
-                  value={newStudentPassword}
-                />
-              </div>
-              <AppButton className="mt-4" disabled={!newStudentName.trim() || !newStudentGrade.trim() || !newStudentPassword.trim()} onClick={addStudent}>
-                <Icon name="plus" className="h-4 w-4" /> 학생 추가
-              </AppButton>
-              {studentMessage && <p className="mt-5 rounded-2xl bg-emerald-50/80 p-4 text-sm font-bold text-emerald-700">{studentMessage}</p>}
-              <div className="mt-8 border-t border-white/50 pt-6">
-                <h3 className="text-sm font-black text-slate-800">등록된 학생</h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {students.map((student) => (
-                    <div className="rounded-2xl bg-white/45 px-4 py-3" key={`student-card-${student.id}`}>
-                      <p className="text-sm font-bold text-slate-700">{student.name}</p>
-                      <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 비밀번호 {student.password}</p>
-                    </div>
-                  ))}
+            <div className="space-y-5">
+              <GlassCard className="p-6 sm:p-8">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
+                  <Icon name="lock" className="h-5 w-5" />
                 </div>
-              </div>
-            </GlassCard>
+                <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-900">교사 계정 관리</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500">교사 이름과 비밀번호는 Firestore에 저장되고, 다음 로그인부터 바로 적용돼요.</p>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-violet-300 focus:bg-white focus:ring-4 focus:ring-violet-100/70"
+                    onChange={(event) => setTeacherName(event.target.value)}
+                    placeholder="교사 이름"
+                    value={teacherName}
+                  />
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-violet-300 focus:bg-white focus:ring-4 focus:ring-violet-100/70"
+                    onChange={(event) => setTeacherCurrentPassword(event.target.value)}
+                    placeholder="현재 비밀번호"
+                    type="password"
+                    value={teacherCurrentPassword}
+                  />
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-violet-300 focus:bg-white focus:ring-4 focus:ring-violet-100/70"
+                    onChange={(event) => setTeacherNewPassword(event.target.value)}
+                    placeholder="새 비밀번호"
+                    type="password"
+                    value={teacherNewPassword}
+                  />
+                </div>
+                <AppButton className="mt-4" disabled={!teacherName.trim() || !teacherCurrentPassword.trim() || !teacherNewPassword.trim()} onClick={updateTeacherAccount}>
+                  <Icon name="check" className="h-4 w-4" /> 교사 계정 변경
+                </AppButton>
+                {teacherMessage && <p className="mt-5 rounded-2xl bg-violet-50/80 p-4 text-sm font-bold text-violet-700">{teacherMessage}</p>}
+              </GlassCard>
+
+              <GlassCard className="p-6 sm:p-8">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
+                  <Icon name="plus" className="h-5 w-5" />
+                </div>
+                <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-900">새 학생 추가</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500">학생 이름, 학년, 임시 비밀번호를 등록하면 바로 로그인할 수 있어요.</p>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                    onChange={(event) => setNewStudentName(event.target.value)}
+                    placeholder="학생 이름"
+                    value={newStudentName}
+                  />
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                    onChange={(event) => setNewStudentGrade(event.target.value)}
+                    placeholder="학년"
+                    value={newStudentGrade}
+                  />
+                  <input
+                    className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3.5 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70"
+                    onChange={(event) => setNewStudentPassword(event.target.value)}
+                    placeholder="임시 비밀번호"
+                    type="password"
+                    value={newStudentPassword}
+                  />
+                </div>
+                <AppButton className="mt-4" disabled={!newStudentName.trim() || !newStudentGrade.trim() || !newStudentPassword.trim()} onClick={addStudent}>
+                  <Icon name="plus" className="h-4 w-4" /> 학생 추가
+                </AppButton>
+                {studentMessage && <p className="mt-5 rounded-2xl bg-emerald-50/80 p-4 text-sm font-bold text-emerald-700">{studentMessage}</p>}
+                <div className="mt-8 border-t border-white/50 pt-6">
+                  <h3 className="text-sm font-black text-slate-800">등록된 학생</h3>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {students.map((student) => (
+                      <div className="rounded-2xl bg-white/45 px-4 py-3" key={`student-card-${student.id}`}>
+                        <p className="text-sm font-bold text-slate-700">{student.name}</p>
+                        <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 비밀번호 {student.password}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </GlassCard>
+            </div>
           )}
         </section>
       </main>
@@ -1043,6 +1127,22 @@ export default function HomePage() {
       return normalizeStudents(initialStudents);
     }
   });
+  const [teacherAccount, setTeacherAccount] = useState<TeacherAccount | null>(() => {
+    if (typeof window === "undefined") return null;
+
+    try {
+      const savedTeacher = window.localStorage.getItem(DEMO_TEACHER_STORAGE_KEY);
+      if (!savedTeacher) return null;
+
+      const parsedTeacher = JSON.parse(savedTeacher) as unknown;
+      return isTeacherAccount(parsedTeacher) && parsedTeacher.name && parsedTeacher.password
+        ? parsedTeacher
+        : null;
+    } catch {
+      window.localStorage.removeItem(DEMO_TEACHER_STORAGE_KEY);
+      return null;
+    }
+  });
   const [currentStudentId, setCurrentStudentId] = useState(initialStudents[0].id);
   const [studyMode, setStudyMode] = useState<StudyMode>("self");
   const [lesson, setLesson] = useState<LessonData | null>(null);
@@ -1050,7 +1150,9 @@ export default function HomePage() {
   const [firestoreReady, setFirestoreReady] = useState(false);
   const [syncMessage, setSyncMessage] = useState("브라우저에 저장 중");
   const applyingRemoteStudents = useRef(false);
+  const applyingRemoteTeacher = useRef(false);
   const initialStudentsForFirestore = useRef(students);
+  const initialTeacherForFirestore = useRef(teacherAccount);
   const currentStudent = useMemo(
     () => students.find((student) => student.id === currentStudentId) ?? students[0] ?? initialStudents[0],
     [currentStudentId, students],
@@ -1072,15 +1174,21 @@ export default function HomePage() {
             if (!snapshot.exists()) {
               await setDoc(demoRef, {
                 students: initialStudentsForFirestore.current,
+                teacherAccount: initialTeacherForFirestore.current,
                 updatedAt: serverTimestamp(),
               });
               return;
             }
 
-            const remoteStudents = snapshot.data().students;
+            const remoteData = snapshot.data();
+            const remoteStudents = remoteData.students;
             if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
               applyingRemoteStudents.current = true;
               setStudents(normalizeStudents(remoteStudents as Student[]));
+            }
+            if (isTeacherAccount(remoteData.teacherAccount) && remoteData.teacherAccount.name && remoteData.teacherAccount.password) {
+              applyingRemoteTeacher.current = true;
+              setTeacherAccount(remoteData.teacherAccount);
             }
             setFirestoreReady(true);
             setSyncMessage("Firestore 연결됨");
@@ -1115,12 +1223,18 @@ export default function HomePage() {
   useEffect(() => {
     try {
       window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(students));
+      if (teacherAccount) {
+        window.localStorage.setItem(DEMO_TEACHER_STORAGE_KEY, JSON.stringify(teacherAccount));
+      } else {
+        window.localStorage.removeItem(DEMO_TEACHER_STORAGE_KEY);
+      }
     } catch {
       // The demo remains usable in browsers that block local storage.
     }
 
-    if (applyingRemoteStudents.current) {
+    if (applyingRemoteStudents.current || applyingRemoteTeacher.current) {
       applyingRemoteStudents.current = false;
+      applyingRemoteTeacher.current = false;
       return;
     }
 
@@ -1130,11 +1244,12 @@ export default function HomePage() {
       doc(db, "demoApps", DEMO_FIRESTORE_DOC),
       {
         students,
+        teacherAccount,
         updatedAt: serverTimestamp(),
       },
       { merge: true },
     );
-  }, [firestoreReady, students]);
+  }, [firestoreReady, students, teacherAccount]);
 
   const logout = () => {
     setScreen("login");
@@ -1143,9 +1258,16 @@ export default function HomePage() {
 
   const login = (role: "student" | "teacher", name: string, password: string) => {
     if (role === "teacher") {
-      if (password !== TEACHER_PASSWORD) {
-        return "선생님 비밀번호가 맞지 않아요.";
+      if (!teacherAccount) {
+        setTeacherAccount({ name, password });
+        setScreen("teacher");
+        return null;
       }
+
+      if (teacherAccount.name !== name || teacherAccount.password !== password) {
+        return "선생님 이름 또는 비밀번호가 맞지 않아요.";
+      }
+
       setScreen("teacher");
       return null;
     }
@@ -1316,6 +1438,23 @@ export default function HomePage() {
     return null;
   };
 
+  const updateTeacherAccount = (currentPassword: string, name: string, password: string) => {
+    if (!teacherAccount) {
+      return "먼저 교사 계정을 설정해 주세요.";
+    }
+
+    if (!currentPassword || !name || !password) {
+      return "교사 이름, 현재 비밀번호, 새 비밀번호를 모두 입력해 주세요.";
+    }
+
+    if (teacherAccount.password !== currentPassword) {
+      return "현재 비밀번호가 맞지 않아요.";
+    }
+
+    setTeacherAccount({ name, password });
+    return null;
+  };
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f9fafb] font-sans text-slate-800 antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(191,219,254,0.78),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(221,214,254,0.75),transparent_34%),radial-gradient(circle_at_55%_90%,rgba(224,231,255,0.78),transparent_38%)]" />
@@ -1323,7 +1462,7 @@ export default function HomePage() {
         {syncMessage}
       </div>
       <div className="relative">
-        {screen === "login" && <LoginScreen onLogin={login} />}
+        {screen === "login" && <LoginScreen hasTeacherAccount={Boolean(teacherAccount)} onLogin={login} />}
         {screen === "student-home" && <StudentHome onChooseMode={(mode) => { setStudyMode(mode); setScreen("study-picker"); }} onLogout={logout} student={currentStudent} />}
         {screen === "study-picker" && <StudyPicker loading={lessonLoading} mode={studyMode} onBack={() => setScreen("student-home")} onLogout={logout} onStart={startLesson} student={currentStudent} />}
         {screen === "lesson" && lesson && (
@@ -1336,7 +1475,16 @@ export default function HomePage() {
             onSubmit={submitAnswer}
           />
         )}
-        {screen === "teacher" && <TeacherDashboard onAddStudent={addStudent} onLogout={logout} onSendAssignment={sendAssignment} students={students} />}
+        {screen === "teacher" && teacherAccount && (
+          <TeacherDashboard
+            onAddStudent={addStudent}
+            onLogout={logout}
+            onSendAssignment={sendAssignment}
+            onUpdateTeacherAccount={updateTeacherAccount}
+            students={students}
+            teacherAccount={teacherAccount}
+          />
+        )}
       </div>
     </div>
   );
