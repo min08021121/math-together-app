@@ -401,16 +401,29 @@ function AppHeader({
 }
 
 function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name: string, password: string) => string | null }) {
-  const [name, setName] = useState("민준");
-  const [password, setPassword] = useState("1234");
+  const [selectedRole, setSelectedRole] = useState<"student" | "teacher" | null>(null);
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const login = (role: "student" | "teacher") => {
+  const chooseRole = (role: "student" | "teacher") => {
+    setSelectedRole(role);
+    setName("");
+    setPassword("");
+    setError("");
+  };
+
+  const login = () => {
+    if (!selectedRole) {
+      setError("학생 또는 선생님을 먼저 선택해 주세요.");
+      return;
+    }
+
     if (!name.trim() || !password.trim()) {
       setError("이름과 비밀번호를 모두 입력해 주세요.");
       return;
     }
-    const loginError = onLogin(role, name.trim(), password.trim());
+    const loginError = onLogin(selectedRole, name.trim(), password.trim());
     setError(loginError ?? "");
   };
 
@@ -424,13 +437,29 @@ function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name:
           <div className="mb-7">
             <span className="mb-3 inline-flex rounded-full bg-blue-50/80 px-3 py-1 text-xs font-bold text-blue-600">반가워요!</span>
             <h1 className="text-2xl font-black tracking-tight text-slate-900">오늘도 같이 공부해요</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">이름과 비밀번호를 입력하고 시작해 주세요.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">역할을 선택한 뒤 받은 이름과 비밀번호로 들어가 주세요.</p>
+          </div>
+          <div className="mb-5 grid grid-cols-2 gap-3">
+            <button
+              className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${selectedRole === "student" ? "border-blue-300 bg-blue-50 text-blue-700 ring-4 ring-blue-100/70" : "border-white/60 bg-white/60 text-slate-500 hover:bg-white"}`}
+              onClick={() => chooseRole("student")}
+              type="button"
+            >
+              학생
+            </button>
+            <button
+              className={`rounded-2xl border px-4 py-3 text-sm font-black transition ${selectedRole === "teacher" ? "border-violet-300 bg-violet-50 text-violet-700 ring-4 ring-violet-100/70" : "border-white/60 bg-white/60 text-slate-500 hover:bg-white"}`}
+              onClick={() => chooseRole("teacher")}
+              type="button"
+            >
+              선생님
+            </button>
           </div>
           <label className="mb-5 block">
             <span className="mb-2 block text-xs font-bold text-slate-600">이름</span>
             <div className="relative">
               <Icon name="person" className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input className="w-full rounded-2xl border border-white/60 bg-white/65 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70" onChange={(event) => setName(event.target.value)} placeholder="이름을 입력해 주세요" value={name} />
+              <input className="w-full rounded-2xl border border-white/60 bg-white/65 py-3.5 pl-11 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/70" onChange={(event) => setName(event.target.value)} placeholder={selectedRole === "teacher" ? "선생님 이름" : "학생 이름"} value={name} />
             </div>
           </label>
           <label className="block">
@@ -442,14 +471,12 @@ function LoginScreen({ onLogin }: { onLogin: (role: "student" | "teacher", name:
           </label>
           {error && <p className="mt-3 text-xs font-bold text-rose-500">{error}</p>}
           <div className="mt-7 space-y-3">
-            <AppButton className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600" onClick={() => login("student")}>
-              <Icon name="person" className="h-4 w-4" /> 학생으로 로그인
-            </AppButton>
-            <AppButton className="w-full" onClick={() => login("teacher")} variant="secondary">
-              <Icon name="teacher" className="h-4 w-4" /> 선생님으로 로그인
+            <AppButton className="w-full bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-700 hover:to-violet-700" disabled={!selectedRole} onClick={login}>
+              <Icon name={selectedRole === "teacher" ? "teacher" : "person"} className="h-4 w-4" />
+              {selectedRole === "teacher" ? "선생님으로 로그인" : selectedRole === "student" ? "학생으로 로그인" : "역할을 선택해 주세요"}
             </AppButton>
           </div>
-          <p className="mt-6 text-center text-[11px] font-medium text-slate-400">학생 비밀번호: 1234 · 선생님 비밀번호: teacher1234</p>
+          <p className="mt-6 text-center text-[11px] font-medium text-slate-400">계정 정보는 담당 교사에게 받은 내용을 사용해 주세요.</p>
         </GlassCard>
       </div>
     </main>
@@ -730,8 +757,8 @@ function TeacherDashboard({
   const [concept, setConcept] = useState("");
   const [sentMessage, setSentMessage] = useState("");
   const [newStudentName, setNewStudentName] = useState("");
-  const [newStudentGrade, setNewStudentGrade] = useState("4학년");
-  const [newStudentPassword, setNewStudentPassword] = useState("1234");
+  const [newStudentGrade, setNewStudentGrade] = useState("");
+  const [newStudentPassword, setNewStudentPassword] = useState("");
   const [studentMessage, setStudentMessage] = useState("");
   const selected = students.find((student) => student.id === selectedId) ?? students[0];
   const failedRecords = selected.records.filter((record) => record.isFailed);
@@ -753,8 +780,8 @@ function TeacherDashboard({
 
     setStudentMessage(`${newStudentName.trim()} 학생을 추가했어요.`);
     setNewStudentName("");
-    setNewStudentGrade("4학년");
-    setNewStudentPassword("1234");
+    setNewStudentGrade("");
+    setNewStudentPassword("");
   };
 
   return (
