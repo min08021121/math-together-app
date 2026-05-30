@@ -215,7 +215,7 @@ const fallbackLesson = (concept: string): LessonAIResponse => ({
 });
 
 async function fetchAIResponse(request: AIRequest): Promise<LessonAIResponse | string> {
-  // Gemini API 연결 시 아래 messages 배열을 그대로 system prompt로 전달합니다.
+  // Gemini API 연결 시 아래 messages 배열의 system 규칙을 서버 API Route에 전달합니다.
   const messages = [
     {
       role: "system",
@@ -230,8 +230,30 @@ async function fetchAIResponse(request: AIRequest): Promise<LessonAIResponse | s
     { role: "user", content: request },
   ];
 
-  // 실제 연동에서는 messages를 Gemini SDK에 전달하고 응답을 파싱합니다.
   void messages;
+
+  try {
+    const response = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+
+      if (request.type === "lesson") {
+        return payload as LessonAIResponse;
+      }
+
+      if (typeof payload.hint === "string") {
+        return payload.hint;
+      }
+    }
+  } catch {
+    // Gemini가 아직 설정되지 않았거나 일시 실패하면 아래 Mock 응답으로 시연 흐름을 유지합니다.
+  }
+
   await new Promise((resolve) => setTimeout(resolve, request.type === "lesson" ? 850 : 650));
 
   if (request.type === "lesson") {
