@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode, type SVGProps } from "react";
+import { signInAnonymously } from "firebase/auth";
+import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type SVGProps } from "react";
+
+import { auth, db } from "@/lib/firebase";
 
 type Screen = "login" | "student-home" | "study-picker" | "lesson" | "teacher";
 type StudyMode = "self" | "homework";
@@ -150,6 +154,7 @@ const initialStudents: Student[] = [
 ];
 
 const DEMO_STORAGE_KEY = "math-together-demo-students";
+const DEMO_FIRESTORE_DOC = "mathTogetherPrototype";
 
 const lessonBank: Record<string, LessonAIResponse> = {
   "분수의 덧셈": {
@@ -914,10 +919,70 @@ export default function HomePage() {
   const [studyMode, setStudyMode] = useState<StudyMode>("self");
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
+  const [firestoreReady, setFirestoreReady] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("브라우저에 저장 중");
+  const applyingRemoteStudents = useRef(false);
+  const initialStudentsForFirestore = useRef(students);
   const currentStudent = useMemo(
     () => students.find((student) => student.id === currentStudentId) ?? students[0] ?? initialStudents[0],
     [currentStudentId, students],
   );
+
+  useEffect(() => {
+    let unsubscribe: undefined | (() => void);
+    let canceled = false;
+
+    async function connectFirestore() {
+      try {
+        await signInAnonymously(auth);
+        if (canceled) return;
+
+        const demoRef = doc(db, "demoApps", DEMO_FIRESTORE_DOC);
+        unsubscribe = onSnapshot(
+          demoRef,
+          async (snapshot) => {
+            if (!snapshot.exists()) {
+              await setDoc(demoRef, {
+                students: initialStudentsForFirestore.current,
+                updatedAt: serverTimestamp(),
+              });
+              return;
+            }
+
+            const remoteStudents = snapshot.data().students;
+            if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
+              applyingRemoteStudents.current = true;
+              setStudents(remoteStudents as Student[]);
+            }
+            setFirestoreReady(true);
+            setSyncMessage("Firestore 연결됨");
+          },
+          (error) => {
+            setFirestoreReady(false);
+            setSyncMessage(
+              error.code === "permission-denied"
+                ? "Firestore 규칙 배포 필요"
+                : "브라우저에 저장 중",
+            );
+          },
+        );
+      } catch (error) {
+        setFirestoreReady(false);
+        setSyncMessage(
+          error instanceof Error && error.message.includes("auth/operation-not-allowed")
+            ? "익명 인증 켜기 필요"
+            : "브라우저에 저장 중",
+        );
+      }
+    }
+
+    void connectFirestore();
+
+    return () => {
+      canceled = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -925,7 +990,23 @@ export default function HomePage() {
     } catch {
       // The demo remains usable in browsers that block local storage.
     }
-  }, [students]);
+
+    if (applyingRemoteStudents.current) {
+      applyingRemoteStudents.current = false;
+      return;
+    }
+
+    if (!firestoreReady) return;
+
+    void setDoc(
+      doc(db, "demoApps", DEMO_FIRESTORE_DOC),
+      {
+        students,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }, [firestoreReady, students]);
 
   const logout = () => {
     setScreen("login");
@@ -1074,6 +1155,9 @@ export default function HomePage() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f9fafb] font-sans text-slate-800 antialiased">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(191,219,254,0.78),transparent_32%),radial-gradient(circle_at_85%_20%,rgba(221,214,254,0.75),transparent_34%),radial-gradient(circle_at_55%_90%,rgba(224,231,255,0.78),transparent_38%)]" />
+      <div className={`fixed bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border px-3 py-1.5 text-[11px] font-black shadow-lg backdrop-blur-xl ${firestoreReady ? "border-emerald-200 bg-emerald-50/80 text-emerald-700" : "border-white/50 bg-white/70 text-slate-500"}`}>
+        {syncMessage}
+      </div>
       <div className="relative">
         {screen === "login" && <LoginScreen onLogin={login} />}
         {screen === "student-home" && <StudentHome onChooseMode={(mode) => { setStudyMode(mode); setScreen("study-picker"); }} onLogout={logout} student={currentStudent} />}

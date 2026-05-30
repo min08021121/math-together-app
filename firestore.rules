@@ -21,6 +21,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(studentId)).data.teacherId == request.auth.uid;
     }
 
+    match /demoApps/{demoId} {
+      allow read, write: if signedIn()
+        && demoId == "mathTogetherPrototype";
+    }
+
     match /users/{userId} {
       allow create: if signedIn()
         && request.auth.uid == userId
