@@ -1,10 +1,31 @@
 "use client";
 
-import { signInAnonymously } from "firebase/auth";
-import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
-import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type SVGProps } from "react";
+import { deleteApp, initializeApp } from "firebase/app";
+import {
+  EmailAuthProvider,
+  createUserWithEmailAndPassword,
+  getAuth,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+} from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getFirestore,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import { useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode, type SVGProps } from "react";
 
-import { auth, db } from "@/lib/firebase";
+import { auth, db, firebaseConfig } from "@/lib/firebase";
 
 type Screen = "login" | "student-home" | "study-picker" | "lesson" | "teacher";
 type StudyMode = "self" | "homework";
@@ -38,6 +59,11 @@ interface Assignment {
   completed: boolean;
 }
 
+interface StoredAssignment extends Assignment {
+  studentId: string;
+  teacherId: string;
+}
+
 interface LearningRecord {
   id: string;
   concept: string;
@@ -49,18 +75,34 @@ interface LearningRecord {
   isCorrect: boolean;
 }
 
+interface StoredLearningRecord extends LearningRecord {
+  studentId: string;
+  teacherId: string;
+}
+
 interface Student {
   id: string;
   name: string;
   grade: string;
-  password: string;
+  loginName?: string;
+  password?: string;
   assignments: Assignment[];
   records: LearningRecord[];
 }
 
 interface TeacherAccount {
+  id: string;
   name: string;
-  password: string;
+  loginName: string;
+}
+
+interface UserProfile {
+  id: string;
+  role: "teacher" | "student";
+  displayName: string;
+  loginName: string;
+  grade?: string;
+  teacherId?: string;
 }
 
 interface LessonProblem {
@@ -163,14 +205,13 @@ const initialStudents: Student[] = [
   },
 ];
 
-const DEMO_STORAGE_KEY = "math-together-demo-students";
-const DEMO_TEACHER_STORAGE_KEY = "math-together-demo-teacher";
-const DEMO_FIRESTORE_DOC = "mathTogetherPrototype";
+const STUDENT_STORAGE_KEY = "math-together-service-students";
+const TEACHER_STORAGE_KEY = "math-together-service-teacher";
 
 const normalizeStudents = (students: Student[]) =>
   students.map((student) => ({
     ...student,
-    password: student.password || "1234",
+    loginName: student.loginName ?? student.name,
     assignments: Array.isArray(student.assignments) ? student.assignments : [],
     records: Array.isArray(student.records) ? student.records : [],
   }));
@@ -179,7 +220,26 @@ const isTeacherAccount = (value: unknown): value is TeacherAccount => {
   if (!value || typeof value !== "object") return false;
 
   const candidate = value as TeacherAccount;
-  return typeof candidate.name === "string" && typeof candidate.password === "string";
+  return typeof candidate.id === "string" && typeof candidate.name === "string" && typeof candidate.loginName === "string";
+};
+
+const makeLoginEmail = (role: "student" | "teacher", loginName: string) => {
+  const encodedName = Array.from(encodeURIComponent(loginName.trim().toLowerCase()))
+    .map((letter) => (/[a-z0-9]/.test(letter) ? letter : letter.charCodeAt(0).toString(16)))
+    .join("");
+
+  return `${role}-${encodedName || "user"}@math-together.local`;
+};
+
+const formatStoredDate = (value: unknown) => {
+  if (value && typeof value === "object" && "toDate" in value) {
+    const timestamp = value as { toDate?: () => Date };
+    if (typeof timestamp.toDate === "function") {
+      return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(timestamp.toDate());
+    }
+  }
+
+  return typeof value === "string" ? value : "방금 전";
 };
 
 const lessonBank: Record<string, LessonAIResponse> = {
@@ -417,7 +477,7 @@ function LoginScreen({
   onLogin,
 }: {
   hasTeacherAccount: boolean;
-  onLogin: (role: "student" | "teacher", name: string, password: string) => string | null;
+  onLogin: (role: "student" | "teacher", name: string, password: string) => Promise<string | null>;
 }) {
   const [selectedRole, setSelectedRole] = useState<"student" | "teacher" | null>(null);
   const [name, setName] = useState("");
@@ -431,7 +491,7 @@ function LoginScreen({
     setError("");
   };
 
-  const login = () => {
+  const login = async () => {
     if (!selectedRole) {
       setError("학생 또는 선생님을 먼저 선택해 주세요.");
       return;
@@ -441,7 +501,7 @@ function LoginScreen({
       setError("이름과 비밀번호를 모두 입력해 주세요.");
       return;
     }
-    const loginError = onLogin(selectedRole, name.trim(), password.trim());
+    const loginError = await onLogin(selectedRole, name.trim(), password.trim());
     setError(loginError ?? "");
   };
 
@@ -775,11 +835,11 @@ function TeacherDashboard({
   students: Student[];
   teacherAccount: TeacherAccount;
   onLogout: () => void;
-  onAddStudent: (name: string, grade: string, password: string) => string | null;
-  onSendAssignment: (studentId: string, concept: string) => void;
-  onUpdateTeacherAccount: (currentPassword: string, name: string, password: string) => string | null;
+  onAddStudent: (name: string, grade: string, password: string) => Promise<string | null>;
+  onSendAssignment: (studentId: string, concept: string) => Promise<void>;
+  onUpdateTeacherAccount: (currentPassword: string, name: string, password: string) => Promise<string | null>;
 }) {
-  const [selectedId, setSelectedId] = useState(students[0].id);
+  const [selectedId, setSelectedId] = useState(students[0]?.id ?? "");
   const [activeTab, setActiveTab] = useState<TeacherTab>("progress");
   const [concept, setConcept] = useState("");
   const [sentMessage, setSentMessage] = useState("");
@@ -791,18 +851,24 @@ function TeacherDashboard({
   const [teacherCurrentPassword, setTeacherCurrentPassword] = useState("");
   const [teacherNewPassword, setTeacherNewPassword] = useState("");
   const [teacherMessage, setTeacherMessage] = useState("");
-  const selected = students.find((student) => student.id === selectedId) ?? students[0];
+  const selected = students.find((student) => student.id === selectedId) ?? students[0] ?? {
+    id: "",
+    name: "학생 없음",
+    grade: "",
+    assignments: [],
+    records: [],
+  };
   const failedRecords = selected.records.filter((record) => record.isFailed);
 
-  const send = () => {
-    if (!concept.trim()) return;
-    onSendAssignment(selected.id, concept.trim());
+  const send = async () => {
+    if (!concept.trim() || !selected.id) return;
+    await onSendAssignment(selected.id, concept.trim());
     setSentMessage(`${selected.name} 학생에게 숙제를 보냈어요.`);
     setConcept("");
   };
 
-  const addStudent = () => {
-    const result = onAddStudent(newStudentName.trim(), newStudentGrade.trim(), newStudentPassword.trim());
+  const addStudent = async () => {
+    const result = await onAddStudent(newStudentName.trim(), newStudentGrade.trim(), newStudentPassword.trim());
 
     if (result) {
       setStudentMessage(result);
@@ -815,8 +881,8 @@ function TeacherDashboard({
     setNewStudentPassword("");
   };
 
-  const updateTeacherAccount = () => {
-    const result = onUpdateTeacherAccount(
+  const updateTeacherAccount = async () => {
+    const result = await onUpdateTeacherAccount(
       teacherCurrentPassword.trim(),
       teacherName.trim(),
       teacherNewPassword.trim(),
@@ -1061,7 +1127,7 @@ function TeacherDashboard({
                     {students.map((student) => (
                       <div className="rounded-2xl bg-white/45 px-4 py-3" key={`student-card-${student.id}`}>
                         <p className="text-sm font-bold text-slate-700">{student.name}</p>
-                        <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 비밀번호 {student.password}</p>
+                        <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 로그인 이름 {student.loginName ?? student.name}</p>
                       </div>
                     ))}
                   </div>
@@ -1111,179 +1177,272 @@ const normalizeAnswer = (answer: string) => answer.replace(/\s|,/g, "").toLowerC
 
 export default function HomePage() {
   const [screen, setScreen] = useState<Screen>("login");
-  const [students, setStudents] = useState<Student[]>(() => {
-    if (typeof window === "undefined") return normalizeStudents(initialStudents);
-
-    try {
-      const savedStudents = window.localStorage.getItem(DEMO_STORAGE_KEY);
-      if (!savedStudents) return normalizeStudents(initialStudents);
-
-      const parsedStudents = JSON.parse(savedStudents) as Student[];
-      return Array.isArray(parsedStudents) && parsedStudents.length > 0
-        ? normalizeStudents(parsedStudents)
-        : normalizeStudents(initialStudents);
-    } catch {
-      window.localStorage.removeItem(DEMO_STORAGE_KEY);
-      return normalizeStudents(initialStudents);
-    }
-  });
+  const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
+  const [studentProfiles, setStudentProfiles] = useState<UserProfile[]>([]);
+  const [storedAssignments, setStoredAssignments] = useState<StoredAssignment[]>([]);
+  const [storedRecords, setStoredRecords] = useState<StoredLearningRecord[]>([]);
   const [teacherAccount, setTeacherAccount] = useState<TeacherAccount | null>(() => {
     if (typeof window === "undefined") return null;
 
     try {
-      const savedTeacher = window.localStorage.getItem(DEMO_TEACHER_STORAGE_KEY);
+      const savedTeacher = window.localStorage.getItem(TEACHER_STORAGE_KEY);
       if (!savedTeacher) return null;
 
       const parsedTeacher = JSON.parse(savedTeacher) as unknown;
-      return isTeacherAccount(parsedTeacher) && parsedTeacher.name && parsedTeacher.password
-        ? parsedTeacher
-        : null;
+      return isTeacherAccount(parsedTeacher) ? parsedTeacher : null;
     } catch {
-      window.localStorage.removeItem(DEMO_TEACHER_STORAGE_KEY);
+      window.localStorage.removeItem(TEACHER_STORAGE_KEY);
       return null;
     }
   });
-  const [currentStudentId, setCurrentStudentId] = useState(initialStudents[0].id);
+  const [currentStudentId, setCurrentStudentId] = useState("");
   const [studyMode, setStudyMode] = useState<StudyMode>("self");
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [firestoreReady, setFirestoreReady] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("브라우저에 저장 중");
-  const applyingRemoteStudents = useRef(false);
-  const applyingRemoteTeacher = useRef(false);
-  const initialStudentsForFirestore = useRef(students);
-  const initialTeacherForFirestore = useRef(teacherAccount);
+  const [syncMessage, setSyncMessage] = useState("로그인 대기 중");
+
+  const students = useMemo(
+    () =>
+      studentProfiles.map((profile) => ({
+        id: profile.id,
+        name: profile.displayName,
+        grade: profile.grade ?? "",
+        loginName: profile.loginName,
+        assignments: storedAssignments.filter((assignment) => assignment.studentId === profile.id),
+        records: storedRecords.filter((record) => record.studentId === profile.id),
+      })),
+    [studentProfiles, storedAssignments, storedRecords],
+  );
+
   const currentStudent = useMemo(
-    () => students.find((student) => student.id === currentStudentId) ?? students[0] ?? initialStudents[0],
+    () => students.find((student) => student.id === currentStudentId) ?? students[0] ?? normalizeStudents(initialStudents)[0],
     [currentStudentId, students],
   );
 
   useEffect(() => {
-    let unsubscribe: undefined | (() => void);
-    let canceled = false;
+    try {
+      if (teacherAccount) {
+        window.localStorage.setItem(TEACHER_STORAGE_KEY, JSON.stringify(teacherAccount));
+      } else {
+        window.localStorage.removeItem(TEACHER_STORAGE_KEY);
+      }
+      window.localStorage.setItem(STUDENT_STORAGE_KEY, JSON.stringify(students));
+    } catch {
+      // The service still works if browser storage is blocked.
+    }
+  }, [students, teacherAccount]);
 
-    async function connectFirestore() {
-      try {
-        await signInAnonymously(auth);
-        if (canceled) return;
+  useEffect(() => {
+    if (!currentProfile) return;
 
-        const demoRef = doc(db, "demoApps", DEMO_FIRESTORE_DOC);
-        unsubscribe = onSnapshot(
-          demoRef,
-          async (snapshot) => {
-            if (!snapshot.exists()) {
-              await setDoc(demoRef, {
-                students: initialStudentsForFirestore.current,
-                teacherAccount: initialTeacherForFirestore.current,
-                updatedAt: serverTimestamp(),
-              });
-              return;
-            }
+    const unsubs: Array<() => void> = [];
 
-            const remoteData = snapshot.data();
-            const remoteStudents = remoteData.students;
-            if (Array.isArray(remoteStudents) && remoteStudents.length > 0) {
-              applyingRemoteStudents.current = true;
-              setStudents(normalizeStudents(remoteStudents as Student[]));
-            }
-            if (isTeacherAccount(remoteData.teacherAccount) && remoteData.teacherAccount.name && remoteData.teacherAccount.password) {
-              applyingRemoteTeacher.current = true;
-              setTeacherAccount(remoteData.teacherAccount);
-            }
+    if (currentProfile.role === "teacher") {
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, "users"), where("teacherId", "==", currentProfile.id)),
+          (snapshot) => {
+            setStudentProfiles(
+              snapshot.docs
+                .map((studentDoc) => {
+                  const data = studentDoc.data();
+                  return {
+                    id: studentDoc.id,
+                    role: "student" as const,
+                    displayName: String(data.displayName ?? ""),
+                    loginName: String(data.loginName ?? data.displayName ?? ""),
+                    grade: String(data.grade ?? ""),
+                    teacherId: String(data.teacherId ?? ""),
+                  };
+                })
+                .filter((profile) => profile.displayName),
+            );
             setFirestoreReady(true);
             setSyncMessage("Firestore 연결됨");
           },
-          (error) => {
+          () => {
             setFirestoreReady(false);
-            setSyncMessage(
-              error.code === "permission-denied"
-                ? "Firestore 규칙 배포 필요"
-                : "브라우저에 저장 중",
-            );
+            setSyncMessage("Firestore 규칙 확인 필요");
           },
-        );
-      } catch (error) {
-        setFirestoreReady(false);
-        setSyncMessage(
-          error instanceof Error && error.message.includes("auth/operation-not-allowed")
-            ? "익명 인증 켜기 필요"
-            : "브라우저에 저장 중",
-        );
-      }
-    }
+        ),
+      );
 
-    void connectFirestore();
+      unsubs.push(
+        onSnapshot(query(collection(db, "assignments"), where("teacherId", "==", currentProfile.id)), (snapshot) => {
+          setStoredAssignments(
+            snapshot.docs.map((assignmentDoc) => {
+              const data = assignmentDoc.data();
+              return {
+                id: assignmentDoc.id,
+                studentId: String(data.studentId ?? ""),
+                teacherId: String(data.teacherId ?? ""),
+                concept: String(data.concept ?? ""),
+                assignedAt: formatStoredDate(data.assignedAt),
+                completed: data.status === "completed" || data.completed === true,
+              };
+            }),
+          );
+        }),
+      );
+
+      unsubs.push(
+        onSnapshot(query(collection(db, "learningRecords"), where("teacherId", "==", currentProfile.id)), (snapshot) => {
+          setStoredRecords(
+            snapshot.docs.map((recordDoc) => {
+              const data = recordDoc.data();
+              return {
+                id: recordDoc.id,
+                studentId: String(data.studentId ?? ""),
+                teacherId: String(data.teacherId ?? ""),
+                concept: String(data.concept ?? ""),
+                question: String(data.question ?? ""),
+                correctAnswer: String(data.correctAnswer ?? ""),
+                attempts: Number(data.attempts ?? 0),
+                wrongAnswers: Array.isArray(data.wrongAnswers) ? data.wrongAnswers.map(String) : [],
+                isFailed: Boolean(data.isFailed),
+                isCorrect: Boolean(data.isCorrect),
+              };
+            }),
+          );
+        }),
+      );
+    } else {
+      unsubs.push(
+        onSnapshot(query(collection(db, "assignments"), where("studentId", "==", currentProfile.id)), (snapshot) => {
+          setStoredAssignments(
+            snapshot.docs.map((assignmentDoc) => {
+              const data = assignmentDoc.data();
+              return {
+                id: assignmentDoc.id,
+                studentId: String(data.studentId ?? ""),
+                teacherId: String(data.teacherId ?? ""),
+                concept: String(data.concept ?? ""),
+                assignedAt: formatStoredDate(data.assignedAt),
+                completed: data.status === "completed" || data.completed === true,
+              };
+            }),
+          );
+          setFirestoreReady(true);
+          setSyncMessage("Firestore 연결됨");
+        }),
+      );
+
+      unsubs.push(
+        onSnapshot(query(collection(db, "learningRecords"), where("studentId", "==", currentProfile.id)), (snapshot) => {
+          setStoredRecords(
+            snapshot.docs.map((recordDoc) => {
+              const data = recordDoc.data();
+              return {
+                id: recordDoc.id,
+                studentId: String(data.studentId ?? ""),
+                teacherId: String(data.teacherId ?? ""),
+                concept: String(data.concept ?? ""),
+                question: String(data.question ?? ""),
+                correctAnswer: String(data.correctAnswer ?? ""),
+                attempts: Number(data.attempts ?? 0),
+                wrongAnswers: Array.isArray(data.wrongAnswers) ? data.wrongAnswers.map(String) : [],
+                isFailed: Boolean(data.isFailed),
+                isCorrect: Boolean(data.isCorrect),
+              };
+            }),
+          );
+        }),
+      );
+    }
 
     return () => {
-      canceled = true;
-      unsubscribe?.();
+      unsubs.forEach((unsubscribe) => unsubscribe());
     };
-  }, []);
+  }, [currentProfile]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(students));
-      if (teacherAccount) {
-        window.localStorage.setItem(DEMO_TEACHER_STORAGE_KEY, JSON.stringify(teacherAccount));
-      } else {
-        window.localStorage.removeItem(DEMO_TEACHER_STORAGE_KEY);
-      }
-    } catch {
-      // The demo remains usable in browsers that block local storage.
-    }
-
-    if (applyingRemoteStudents.current || applyingRemoteTeacher.current) {
-      applyingRemoteStudents.current = false;
-      applyingRemoteTeacher.current = false;
-      return;
-    }
-
-    if (!firestoreReady) return;
-
-    void setDoc(
-      doc(db, "demoApps", DEMO_FIRESTORE_DOC),
-      {
-        students,
-        teacherAccount,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
-  }, [firestoreReady, students, teacherAccount]);
-
-  const logout = () => {
+  const logout = async () => {
+    await signOut(auth);
     setScreen("login");
     setLesson(null);
+    setCurrentProfile(null);
+    setTeacherAccount(null);
+    setStudentProfiles([]);
+    setStoredAssignments([]);
+    setStoredRecords([]);
+    setFirestoreReady(false);
+    setSyncMessage("로그인 대기 중");
   };
 
-  const login = (role: "student" | "teacher", name: string, password: string) => {
-    if (role === "teacher") {
-      if (!teacherAccount) {
-        setTeacherAccount({ name, password });
-        setScreen("teacher");
-        return null;
-      }
+  const readProfile = async (uid: string): Promise<UserProfile | null> => {
+    const profileSnapshot = await getDoc(doc(db, "users", uid));
+    if (!profileSnapshot.exists()) return null;
 
-      if (teacherAccount.name !== name || teacherAccount.password !== password) {
-        return "선생님 이름 또는 비밀번호가 맞지 않아요.";
-      }
+    const data = profileSnapshot.data();
+    return {
+      id: profileSnapshot.id,
+      role: data.role === "teacher" ? "teacher" : "student",
+      displayName: String(data.displayName ?? ""),
+      loginName: String(data.loginName ?? ""),
+      grade: data.grade ? String(data.grade) : undefined,
+      teacherId: data.teacherId ? String(data.teacherId) : undefined,
+    };
+  };
 
+  const enterWithProfile = (profile: UserProfile) => {
+    setFirestoreReady(false);
+    setSyncMessage("Firestore 연결 중");
+    setCurrentProfile(profile);
+    if (profile.role === "teacher") {
+      setTeacherAccount({ id: profile.id, name: profile.displayName, loginName: profile.loginName });
       setScreen("teacher");
+    } else {
+      setStudentProfiles([profile]);
+      setCurrentStudentId(profile.id);
+      setScreen("student-home");
+    }
+  };
+
+  const login = async (role: "student" | "teacher", name: string, password: string) => {
+    const email = makeLoginEmail(role, name);
+
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      const profile = await readProfile(credential.user.uid);
+
+      if (!profile || profile.role !== role) {
+        await signOut(auth);
+        return "계정 정보를 찾을 수 없어요.";
+      }
+
+      enterWithProfile(profile);
       return null;
-    }
-    const matchingStudent = students.find((student) => student.name === name);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
 
-    if (!matchingStudent) {
-      return "등록된 학생 이름이 아니에요.";
-    }
+      if (role !== "teacher" || !["auth/invalid-credential", "auth/user-not-found"].includes(code ?? "")) {
+        return role === "student"
+          ? "학생 이름 또는 비밀번호가 맞지 않아요."
+          : "선생님 이름 또는 비밀번호가 맞지 않아요.";
+      }
 
-    if (matchingStudent.password !== password) {
-      return "학생 비밀번호가 맞지 않아요.";
-    }
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        const profile: UserProfile = {
+          id: credential.user.uid,
+          role: "teacher",
+          displayName: name,
+          loginName: name,
+        };
 
-    setCurrentStudentId(matchingStudent.id);
-    setScreen("student-home");
-    return null;
+        await setDoc(doc(db, "users", credential.user.uid), {
+          role: "teacher",
+          displayName: name,
+          loginName: name,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        enterWithProfile(profile);
+        return null;
+      } catch {
+        return "교사 계정을 만들 수 없어요. Firebase Authentication의 이메일/비밀번호 로그인을 확인해 주세요.";
+      }
+    }
   };
 
   const startLesson = async (concept: string, assignmentId?: string) => {
@@ -1293,18 +1452,10 @@ export default function HomePage() {
     if (typeof response !== "string") {
       setLesson(createLesson(response, concept));
       if (assignmentId) {
-        setStudents((previous) =>
-          previous.map((student) =>
-            student.id === currentStudentId
-              ? {
-                  ...student,
-                  assignments: student.assignments.map((assignment) =>
-                    assignment.id === assignmentId ? { ...assignment, completed: true } : assignment,
-                  ),
-                }
-              : student,
-          ),
-        );
+        await updateDoc(doc(db, "assignments", assignmentId), {
+          status: "completed",
+          completedAt: serverTimestamp(),
+        });
       }
       setScreen("lesson");
     }
@@ -1319,30 +1470,37 @@ export default function HomePage() {
     );
   };
 
-  const recordAttempt = (problem: LessonProblem, input: string, nextAttempts: number, isCorrect: boolean, isFailed: boolean) => {
-    setStudents((previous) =>
-      previous.map((student) => {
-        if (student.id !== currentStudentId) return student;
-        const existing = student.records.find((record) => record.id === problem.id);
-        const wrongAnswers = isCorrect ? existing?.wrongAnswers ?? [] : [...(existing?.wrongAnswers ?? []), input];
-        const updatedRecord: LearningRecord = {
-          id: problem.id,
-          concept: lesson?.concept ?? "",
-          question: problem.question,
-          correctAnswer: problem.answer,
-          attempts: nextAttempts,
-          wrongAnswers,
-          isFailed,
-          isCorrect,
-        };
-        return {
-          ...student,
-          records: existing
-            ? student.records.map((record) => (record.id === problem.id ? updatedRecord : record))
-            : [...student.records, updatedRecord],
-        };
-      }),
-    );
+  const recordAttempt = async (problem: LessonProblem, input: string, nextAttempts: number, isCorrect: boolean, isFailed: boolean) => {
+    if (!currentProfile || currentProfile.role !== "student" || !currentProfile.teacherId) return;
+
+    const existing = currentStudent.records.find((record) => record.id === problem.id);
+    const wrongAnswers = isCorrect ? existing?.wrongAnswers ?? [] : [...(existing?.wrongAnswers ?? []), input];
+    const recordRef = doc(db, "learningRecords", problem.id);
+
+    if (existing) {
+      await updateDoc(recordRef, {
+        attempts: nextAttempts,
+        wrongAnswers,
+        isFailed,
+        isCorrect,
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    }
+
+    await setDoc(recordRef, {
+      studentId: currentProfile.id,
+      teacherId: currentProfile.teacherId,
+      concept: lesson?.concept ?? "",
+      question: problem.question,
+      correctAnswer: problem.answer,
+      attempts: nextAttempts,
+      wrongAnswers,
+      isFailed,
+      isCorrect,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   };
 
   const submitAnswer = async (problemId: string) => {
@@ -1353,7 +1511,7 @@ export default function HomePage() {
     const nextAttempts = problem.attempts + 1;
     const isCorrect = normalizeAnswer(input) === normalizeAnswer(problem.answer);
     const isFailed = !isCorrect && nextAttempts >= 3;
-    recordAttempt(problem, input, nextAttempts, isCorrect, isFailed);
+    void recordAttempt(problem, input, nextAttempts, isCorrect, isFailed);
 
     if (isCorrect) {
       updateLessonProblem(problemId, (current) => ({
@@ -1394,52 +1552,62 @@ export default function HomePage() {
     }
   };
 
-  const sendAssignment = (studentId: string, concept: string) => {
-    setStudents((previous) =>
-      previous.map((student) =>
-        student.id === studentId
-          ? {
-              ...student,
-              assignments: [
-                {
-                  id: `assignment-${Date.now()}`,
-                  concept,
-                  assignedAt: "방금 전",
-                  completed: false,
-                },
-                ...student.assignments,
-              ],
-            }
-          : student,
-      ),
-    );
+  const sendAssignment = async (studentId: string, concept: string) => {
+    if (!currentProfile || currentProfile.role !== "teacher") return;
+
+    await addDoc(collection(db, "assignments"), {
+      teacherId: currentProfile.id,
+      studentId,
+      concept,
+      status: "assigned",
+      assignedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   };
 
-  const addStudent = (name: string, grade: string, password: string) => {
+  const addStudent = async (name: string, grade: string, password: string) => {
+    if (!currentProfile || currentProfile.role !== "teacher") {
+      return "교사 계정으로 로그인해야 학생을 추가할 수 있어요.";
+    }
+
     if (!name || !grade || !password) {
       return "이름, 학년, 비밀번호를 모두 입력해 주세요.";
     }
 
-    if (students.some((student) => student.name === name)) {
+    if (students.some((student) => (student.loginName ?? student.name) === name)) {
       return "이미 등록된 학생 이름이에요.";
     }
 
-    const newStudent: Student = {
-      id: `student-${Date.now()}`,
-      name,
-      grade,
-      password,
-      assignments: [],
-      records: [],
-    };
+    const secondaryApp = initializeApp(firebaseConfig, `student-create-${Date.now()}`);
+    const secondaryAuth = getAuth(secondaryApp);
+    const secondaryDb = getFirestore(secondaryApp);
 
-    setStudents((previous) => [...previous, newStudent]);
-    setCurrentStudentId(newStudent.id);
-    return null;
+    try {
+      const credential = await createUserWithEmailAndPassword(secondaryAuth, makeLoginEmail("student", name), password);
+      await setDoc(doc(secondaryDb, "users", credential.user.uid), {
+        role: "student",
+        displayName: name,
+        loginName: name,
+        grade,
+        teacherId: currentProfile.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await signOut(secondaryAuth);
+      setCurrentStudentId(credential.user.uid);
+      return null;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      return code === "auth/email-already-in-use"
+        ? "이미 사용 중인 학생 이름이에요."
+        : "학생 계정을 만들 수 없어요. Authentication 설정을 확인해 주세요.";
+    } finally {
+      await deleteApp(secondaryApp);
+    }
   };
 
-  const updateTeacherAccount = (currentPassword: string, name: string, password: string) => {
-    if (!teacherAccount) {
+  const updateTeacherAccount = async (currentPassword: string, name: string, password: string) => {
+    if (!teacherAccount || !auth.currentUser) {
       return "먼저 교사 계정을 설정해 주세요.";
     }
 
@@ -1447,12 +1615,20 @@ export default function HomePage() {
       return "교사 이름, 현재 비밀번호, 새 비밀번호를 모두 입력해 주세요.";
     }
 
-    if (teacherAccount.password !== currentPassword) {
-      return "현재 비밀번호가 맞지 않아요.";
+    try {
+      const credential = EmailAuthProvider.credential(makeLoginEmail("teacher", teacherAccount.loginName), currentPassword);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      await updatePassword(auth.currentUser, password);
+      await updateDoc(doc(db, "users", teacherAccount.id), {
+        displayName: name,
+        updatedAt: serverTimestamp(),
+      });
+      setTeacherAccount({ ...teacherAccount, name });
+      setCurrentProfile((previous) => previous ? { ...previous, displayName: name } : previous);
+      return null;
+    } catch {
+      return "현재 비밀번호가 맞지 않거나, 다시 로그인한 뒤 변경해야 해요.";
     }
-
-    setTeacherAccount({ name, password });
-    return null;
   };
 
   return (

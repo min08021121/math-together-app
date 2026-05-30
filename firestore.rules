@@ -126,10 +126,13 @@ service cloud.firestore {
         && request.resource.data.studentId == request.auth.uid
         && request.resource.data.teacherId
           == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teacherId
-        && request.resource.data.attempts == 0
-        && request.resource.data.wrongAnswers.size() == 0
-        && request.resource.data.isFailed == false
-        && request.resource.data.isCorrect == false;
+        && request.resource.data.attempts >= 1
+        && request.resource.data.attempts <= 3
+        && request.resource.data.wrongAnswers.size() <= request.resource.data.attempts
+        && (
+          request.resource.data.isFailed == false
+          || request.resource.data.attempts >= 3
+        );
 
       allow read: if signedIn()
         && (resource.data.teacherId == request.auth.uid
