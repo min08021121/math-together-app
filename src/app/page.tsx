@@ -738,7 +738,7 @@ function LessonScreen({
   return (
     <>
       <AppHeader onBack={onBack} onHome={onHome} onLogout={onLogout} title={lesson.concept} />
-      <main className="mx-auto w-full max-w-3xl px-5 pb-14 pt-4 sm:px-8 sm:pt-8">
+      <main className="mx-auto w-full max-w-6xl px-5 pb-14 pt-4 sm:px-8 sm:pt-8">
         <div className="mb-7">
           <div className="mb-2 flex items-center justify-between text-xs font-extrabold">
             <span className="text-slate-500">오늘의 문제</span>
@@ -756,18 +756,18 @@ function LessonScreen({
           <h1 className="mt-4 text-2xl font-black tracking-tight text-slate-900">{lesson.concept}</h1>
           <p className="mt-4 whitespace-pre-line text-sm font-medium leading-7 text-slate-600">{lesson.explanation}</p>
         </GlassCard>
-        <div className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-2">
           {lesson.problems.map((problem, index) => {
             const isDone = problem.isCorrect || problem.isFailed;
             return (
               <GlassCard className={`p-5 transition sm:p-6 ${problem.isCorrect ? "ring-2 ring-emerald-200/80" : problem.isFailed ? "ring-2 ring-rose-200/80" : ""}`} key={problem.id}>
-                <div className="flex items-start gap-4">
+                <div className="flex h-full flex-col gap-4">
                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl text-sm font-black ${problem.isCorrect ? "bg-emerald-100 text-emerald-600" : problem.isFailed ? "bg-rose-100 text-rose-600" : "bg-white/80 text-slate-600"}`}>
                     {problem.isCorrect ? <Icon name="check" className="h-4 w-4" /> : problem.isFailed ? <Icon name="x" className="h-4 w-4" /> : index + 1}
                   </span>
-                  <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-1 flex-col">
                     <p className="text-sm font-bold leading-6 text-slate-700">{problem.question}</p>
-                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row lg:flex-col xl:flex-row">
                       <input
                         aria-label={`${index + 1}번 문제 정답`}
                         className="min-w-0 flex-1 rounded-2xl border border-white/70 bg-white/65 px-4 py-3 text-sm font-bold text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/60 disabled:bg-white/30 disabled:text-slate-400"
@@ -806,7 +806,7 @@ function LessonScreen({
               <Icon name="sparkles" className="h-6 w-6" />
             </div>
             <h2 className="mt-4 text-xl font-black text-slate-900">오늘 공부도 정말 잘했어요!</h2>
-            <p className="mt-2 text-sm font-medium text-slate-500">5문제 중 {solvedCount}문제를 스스로 해결했어요.</p>
+            <p className="mt-2 text-sm font-medium text-slate-500">{lesson.problems.length}문제 중 {solvedCount}문제를 스스로 해결했어요.</p>
             <AppButton className="mt-5" onClick={onHome}>학습 홈으로 돌아가기</AppButton>
           </GlassCard>
         )}
@@ -1212,7 +1212,7 @@ function StatCard({ label, tone, value }: { label: string; tone: "blue" | "viole
 const createLesson = (response: LessonAIResponse, concept: string): LessonData => ({
   concept,
   explanation: response.explanation,
-  problems: response.problems.map((problem) => ({
+  problems: response.problems.slice(0, 4).map((problem) => ({
     ...problem,
     id: `${problem.id}-${Date.now()}`,
     input: "",

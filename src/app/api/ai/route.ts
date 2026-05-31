@@ -53,7 +53,7 @@ function isLessonResponse(value: unknown): value is LessonAIResponse {
   return (
     typeof candidate.explanation === "string" &&
     Array.isArray(candidate.problems) &&
-    candidate.problems.length === 5 &&
+    candidate.problems.length === 4 &&
     candidate.problems.every(
       (problem) =>
         problem &&
@@ -68,7 +68,7 @@ function buildUserPrompt(request: AIRequest) {
   if (request.type === "lesson") {
     return [
       `개념: ${request.concept}`,
-      "이 개념을 초등학생에게 3~5줄로 설명하고, 같은 개념을 연습할 수 있는 문장제 문제 5개를 만들어 주세요.",
+      "이 개념을 초등학생에게 3~5줄로 설명하고, 같은 개념을 연습할 수 있는 문장제 문제 4개를 만들어 주세요.",
       "정답은 학생이 입력하기 쉬운 짧은 형태로 써 주세요.",
       "반드시 아래 JSON 형식만 반환하세요.",
       `{
