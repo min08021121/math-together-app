@@ -29,7 +29,7 @@ import { auth, db, firebaseConfig } from "@/lib/firebase";
 
 type Screen = "login" | "student-home" | "study-picker" | "lesson" | "teacher";
 type StudyMode = "self" | "homework";
-type TeacherTab = "progress" | "assignment" | "students";
+type TeacherTab = "roster" | "progress" | "assignment" | "students" | "account";
 type AIRequest =
   | { type: "lesson"; concept: string }
   | { type: "hint"; concept: string; problem: LessonProblem; attempt: 1 | 2 };
@@ -831,7 +831,7 @@ function TeacherDashboard({
   onUpdateTeacherAccount: (currentPassword: string, name: string, password: string) => Promise<string | null>;
 }) {
   const [selectedId, setSelectedId] = useState(students[0]?.id ?? "");
-  const [activeTab, setActiveTab] = useState<TeacherTab>("progress");
+  const [activeTab, setActiveTab] = useState<TeacherTab>("roster");
   const [concept, setConcept] = useState("");
   const [sentMessage, setSentMessage] = useState("");
   const [newStudentName, setNewStudentName] = useState("");
@@ -902,8 +902,8 @@ function TeacherDashboard({
           </div>
         </div>
       </header>
-      <main className="mx-auto grid w-full max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:grid-cols-[240px_1fr] lg:py-8">
-        <GlassCard className="h-fit p-3 lg:sticky lg:top-6">
+      <main className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:py-8">
+        <GlassCard className="hidden">
           <p className="px-3 pb-2 pt-2 text-xs font-black text-slate-400">내 반 학생</p>
           <div className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible">
             {students.map((student) => (
@@ -928,16 +928,75 @@ function TeacherDashboard({
           <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
               <p className="text-xs font-black text-blue-600">학습 관리</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900">{selected.name} 학생</h1>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900">
+                {activeTab === "roster" ? "우리 반 학생" : activeTab === "students" ? "학생 추가" : activeTab === "account" ? "교사 계정 관리" : `${selected.name} 학생`}
+              </h1>
             </div>
-            <div className="flex w-fit gap-1 rounded-2xl bg-white/45 p-1 backdrop-blur-xl">
+            <div className="flex w-fit flex-wrap gap-1 rounded-2xl bg-white/45 p-1 backdrop-blur-xl">
+              <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "roster" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("roster")}>학생 명단</button>
+              <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "account" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("account")}>교사 계정</button>
               <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "progress" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("progress")}>학생별 학습 현황</button>
               <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "assignment" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("assignment")}>숙제 내주기</button>
               <button className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${activeTab === "students" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`} onClick={() => setActiveTab("students")}>학생 추가</button>
             </div>
           </div>
-          {activeTab === "progress" ? (
+          {activeTab === "roster" ? (
             <div className="space-y-5">
+              <GlassCard className="p-6 sm:p-8">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight text-slate-900">학생을 선택해 주세요</h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">이름을 누르면 해당 학생의 문제 풀이 기록 페이지로 이동해요.</p>
+                  </div>
+                  <AppButton variant="secondary" onClick={() => setActiveTab("students")}>
+                    <Icon name="plus" className="h-4 w-4" /> 학생 추가
+                  </AppButton>
+                </div>
+                {students.length ? (
+                  <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {students.map((student) => {
+                      const failedCount = student.records.filter((record) => record.isFailed).length;
+
+                      return (
+                        <button
+                          className="rounded-3xl border border-white/60 bg-white/55 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-white/80 hover:shadow-lg"
+                          key={`roster-${student.id}`}
+                          onClick={() => {
+                            setSelectedId(student.id);
+                            setSentMessage("");
+                            setActiveTab("progress");
+                          }}
+                          type="button"
+                        >
+                          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-lg font-black text-white">{student.name[0]}</span>
+                          <span className="mt-4 block text-lg font-black text-slate-900">{student.name}</span>
+                          <span className="mt-1 block text-xs font-bold text-slate-400">{student.grade || "학년 미입력"}</span>
+                          <span className="mt-4 grid grid-cols-2 gap-2 text-center text-[11px] font-black">
+                            <span className="rounded-2xl bg-blue-50 px-2 py-2 text-blue-600">문제 {student.records.length}</span>
+                            <span className="rounded-2xl bg-rose-50 px-2 py-2 text-rose-600">미해결 {failedCount}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-7 rounded-3xl bg-white/40 p-10 text-center">
+                    <p className="text-sm font-bold text-slate-600">아직 등록된 학생이 없어요.</p>
+                    <p className="mt-2 text-xs font-medium text-slate-400">학생 추가 탭에서 첫 학생을 등록해 주세요.</p>
+                  </div>
+                )}
+              </GlassCard>
+            </div>
+          ) : activeTab === "progress" ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap gap-2">
+                <AppButton variant="secondary" onClick={() => setActiveTab("roster")}>
+                  <Icon name="arrowLeft" className="h-4 w-4" /> 학생 명단으로
+                </AppButton>
+                <AppButton variant="secondary" onClick={() => setActiveTab("assignment")}>
+                  <Icon name="send" className="h-4 w-4" /> 숙제 내주기
+                </AppButton>
+              </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <StatCard label="풀이한 문제" tone="blue" value={`${selected.records.length}개`} />
                 <StatCard label="전체 시도 횟수" tone="violet" value={`${selected.records.reduce((total, record) => total + record.attempts, 0)}회`} />
@@ -1005,6 +1064,9 @@ function TeacherDashboard({
             </div>
           ) : activeTab === "assignment" ? (
             <GlassCard className="p-6 sm:p-8">
+              <AppButton variant="secondary" onClick={() => setActiveTab("progress")}>
+                <Icon name="arrowLeft" className="h-4 w-4" /> 학습 기록으로
+              </AppButton>
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
                 <Icon name="send" className="h-5 w-5" />
               </div>
@@ -1047,7 +1109,7 @@ function TeacherDashboard({
             </GlassCard>
           ) : (
             <div className="space-y-5">
-              <GlassCard className="p-6 sm:p-8">
+              <GlassCard className={`${activeTab === "students" ? "hidden " : ""}p-6 sm:p-8`}>
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
                   <Icon name="lock" className="h-5 w-5" />
                 </div>
@@ -1081,7 +1143,7 @@ function TeacherDashboard({
                 {teacherMessage && <p className="mt-5 rounded-2xl bg-violet-50/80 p-4 text-sm font-bold text-violet-700">{teacherMessage}</p>}
               </GlassCard>
 
-              <GlassCard className="p-6 sm:p-8">
+              <GlassCard className={`${activeTab === "account" ? "hidden " : ""}p-6 sm:p-8`}>
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
                   <Icon name="plus" className="h-5 w-5" />
                 </div>
