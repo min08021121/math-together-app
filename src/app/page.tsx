@@ -13,6 +13,7 @@ import {
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getFirestore,
@@ -821,6 +822,7 @@ function TeacherDashboard({
   teacherAccount,
   onLogout,
   onAddStudent,
+  onDeleteStudent,
   onSendAssignment,
   onUpdateTeacherAccount,
 }: {
@@ -828,6 +830,7 @@ function TeacherDashboard({
   teacherAccount: TeacherAccount;
   onLogout: () => void;
   onAddStudent: (name: string, grade: string, password: string) => Promise<string | null>;
+  onDeleteStudent: (studentId: string) => Promise<string | null>;
   onSendAssignment: (studentId: string, concept: string) => Promise<void>;
   onUpdateTeacherAccount: (currentPassword: string, name: string, password: string) => Promise<string | null>;
 }) {
@@ -888,6 +891,23 @@ function TeacherDashboard({
     setTeacherMessage("교사 계정 정보를 변경했어요.");
     setTeacherCurrentPassword("");
     setTeacherNewPassword("");
+  };
+
+  const deleteStudent = async (student: Student) => {
+    const confirmed = window.confirm(`${student.name} 학생을 삭제할까요? 숙제와 학습 기록도 함께 삭제됩니다.`);
+    if (!confirmed) return;
+
+    const result = await onDeleteStudent(student.id);
+    if (result) {
+      setStudentMessage(result);
+      return;
+    }
+
+    setStudentMessage(`${student.name} 학생을 삭제했어요.`);
+    if (selectedId === student.id) {
+      setSelectedId("");
+      setActiveTab("roster");
+    }
   };
 
   return (
@@ -1183,6 +1203,13 @@ function TeacherDashboard({
                         <p className="text-sm font-bold text-slate-700">{student.name}</p>
                         <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 로그인 이름 {student.loginName ?? student.name}</p>
                         <p className="mt-1 text-[11px] font-black text-slate-500">비밀번호 {student.password ?? "기록 없음"}</p>
+                        <button
+                          className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[11px] font-black text-rose-600 transition hover:bg-rose-100"
+                          onClick={() => void deleteStudent(student)}
+                          type="button"
+                        >
+                          학생 삭제
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1678,6 +1705,33 @@ export default function HomePage() {
     }
   };
 
+  const deleteStudent = async (studentId: string) => {
+    if (!currentProfile || currentProfile.role !== "teacher") {
+      return "교사 계정으로 로그인해야 학생을 삭제할 수 있어요.";
+    }
+
+    const targetStudent = students.find((student) => student.id === studentId);
+    if (!targetStudent) {
+      return "삭제할 학생을 찾을 수 없어요.";
+    }
+
+    try {
+      await Promise.all([
+        ...targetStudent.assignments.map((assignment) => deleteDoc(doc(db, "assignments", assignment.id))),
+        ...targetStudent.records.map((record) => deleteDoc(doc(db, "learningRecords", record.id))),
+      ]);
+      await deleteDoc(doc(db, "users", studentId));
+
+      if (currentStudentId === studentId) {
+        setCurrentStudentId("");
+      }
+
+      return null;
+    } catch {
+      return "학생 삭제 중 오류가 생겼어요. Firestore 규칙을 확인해 주세요.";
+    }
+  };
+
   const updateTeacherAccount = async (currentPassword: string, name: string, password: string) => {
     if (!teacherAccount || !auth.currentUser) {
       return "먼저 교사 계정을 설정해 주세요.";
@@ -1729,6 +1783,7 @@ export default function HomePage() {
         {screen === "teacher" && teacherAccount && (
           <TeacherDashboard
             onAddStudent={addStudent}
+            onDeleteStudent={deleteStudent}
             onLogout={logout}
             onSendAssignment={sendAssignment}
             onUpdateTeacherAccount={updateTeacherAccount}

@@ -49,6 +49,10 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(["displayName"]);
+
+      allow delete: if isTeacher()
+        && resource.data.role == "student"
+        && resource.data.teacherId == request.auth.uid;
     }
 
     match /teacherInvites/{inviteCode} {
