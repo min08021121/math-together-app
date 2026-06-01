@@ -102,6 +102,7 @@ interface UserProfile {
   displayName: string;
   loginName: string;
   grade?: string;
+  password?: string;
   teacherId?: string;
 }
 
@@ -1181,6 +1182,7 @@ function TeacherDashboard({
                       <div className="rounded-2xl bg-white/45 px-4 py-3" key={`student-card-${student.id}`}>
                         <p className="text-sm font-bold text-slate-700">{student.name}</p>
                         <p className="mt-1 text-[11px] font-medium text-slate-400">{student.grade} · 로그인 이름 {student.loginName ?? student.name}</p>
+                        <p className="mt-1 text-[11px] font-black text-slate-500">비밀번호 {student.password ?? "기록 없음"}</p>
                       </div>
                     ))}
                   </div>
@@ -1262,6 +1264,7 @@ export default function HomePage() {
         name: profile.displayName,
         grade: profile.grade ?? "",
         loginName: profile.loginName,
+        password: profile.password,
         assignments: storedAssignments.filter((assignment) => assignment.studentId === profile.id),
         records: storedRecords.filter((record) => record.studentId === profile.id),
       })),
@@ -1306,6 +1309,7 @@ export default function HomePage() {
                     displayName: String(data.displayName ?? ""),
                     loginName: String(data.loginName ?? data.displayName ?? ""),
                     grade: String(data.grade ?? ""),
+                    password: typeof data.password === "string" ? data.password : undefined,
                     teacherId: String(data.teacherId ?? ""),
                   };
                 })
@@ -1650,6 +1654,7 @@ export default function HomePage() {
         displayName: name,
         loginName: name,
         grade,
+        password,
         teacherId: currentProfile.id,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
